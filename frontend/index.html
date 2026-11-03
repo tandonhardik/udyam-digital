@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accel Business · Udyam Digital</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <b>Accel Business</b><span>Udyam Digital</span>
+  <button id="langBtn" title="Language">हिं / EN</button>
+</header>
+<nav id="steps">
+  <i data-s="advisor" class="on">1 Advisor</i><i data-s="quote">2 Quote</i><i data-s="kyc">3 KYC</i><i data-s="track">4 Tracker</i>
+</nav>
+<main>
+  <!-- 1 ADVISOR -->
+  <section id="advisor">
+    <div id="chat"></div>
+    <form id="chatForm"><input id="chatIn" autocomplete="off" placeholder="Type here… / यहाँ लिखें…"><button>Send</button></form>
+  </section>
+
+  <!-- 2 QUOTE -->
+  <section id="quote" hidden>
+    <h2>Your bundle</h2>
+    <div id="lines"></div>
+    <div id="addons"></div>
+    <div id="totals"></div>
+    <div id="violations" class="err"></div>
+    <button id="toKyc" class="primary">Continue to KYC</button>
+  </section>
+
+  <!-- 3 KYC -->
+  <section id="kyc" hidden>
+    <h2>Verify your business</h2>
+    <div id="consent" class="card">
+      <h3>Before we start: your consent</h3>
+      <div id="consentBody"></div>
+      <label class="chk"><input type="checkbox" id="c1"> I agree to my documents being checked to verify my business (required)</label>
+      <label class="chk"><input type="checkbox" id="c2"> I agree to the verified details being used to set up and bill my services (required)</label>
+      <button id="consentBtn" class="primary" disabled>I consent, continue</button>
+    </div>
+    <div id="upload" hidden class="card">
+      <button class="ghost" id="digi">Fetch instantly via DigiLocker (coming soon)</button>
+      <p>Or upload photos of: GST certificate, Udyam certificate, address proof (bill ≤ 90 days old) and signatory ID.</p>
+      <input type="file" id="files" accept="image/*" multiple>
+      <button id="verifyBtn" class="primary">Verify documents</button>
+      <div id="kycOut"></div>
+    </div>
+    <button id="placeBtn" class="primary" hidden>Place order</button>
+  </section>
+
+  <!-- 4 TRACKER -->
+  <section id="track" hidden>
+    <h2>Order tracker</h2>
+    <div id="orderInfo"></div>
+    <div id="timeline"></div>
+    <label class="demo">Demo: fast-forward <input type="range" id="ff" min="0" max="20" value="0"> <span id="ffv">today</span></label>
+  </section>
+</main>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
