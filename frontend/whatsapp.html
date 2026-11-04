@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatsApp Simulator</title>
+<style>
+  body { margin: 0; background: #e5ddd5; font-family: sans-serif; display: flex; justify-content: center; height: 100vh; }
+  .phone { width: 100%; max-width: 400px; background: #efeae2; display: flex; flex-direction: column; height: 100%; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+  .header { background: #075e54; color: white; padding: 15px; font-weight: bold; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+  .chat { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); }
+  .msg { max-width: 80%; padding: 10px 14px; border-radius: 8px; font-size: 15px; line-height: 1.4; white-space: pre-wrap; position: relative; }
+  .bot { background: #fff; align-self: flex-start; border-radius: 0 8px 8px 8px; }
+  .me { background: #dcf8c6; align-self: flex-end; border-radius: 8px 0 8px 8px; }
+  .input-area { background: #f0f0f0; padding: 10px; display: flex; gap: 10px; }
+  input { flex: 1; padding: 12px; border: none; border-radius: 20px; outline: none; font-size: 15px; }
+  button { background: #008f82; color: white; border: none; border-radius: 50%; width: 45px; height: 45px; cursor: pointer; font-weight: bold; }
+  a { color: #027eb5; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="header">
+    <div style="width:35px; height:35px; background:#ccc; border-radius:50%; display:inline-block;"></div>
+    Accel Business AI
+  </div>
+  
+  <div class="chat" id="chat">
+    <div class="msg bot">Type 'Hi' to start chatting with your AI Advisor!</div>
+  </div>
+
+  <form class="input-area" id="wa-form">
+    <input type="text" id="wa-in" placeholder="Message" autocomplete="off" required>
+    <button type="submit">➤</button>
+  </form>
+</div>
+
+<script>
+  const phoneNum = "+919876543210"; // Simulated user phone number (Session ID)
+  
+  // URLify function to make links clickable in the chat
+  function linkify(text) {
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      return text.replace(urlRegex, function(url) {
+          return '<a href="' + url + '" target="_blank">' + url + '</a>';
+      });
+  }
+
+  function appendMsg(text, sender) {
+    const chat = document.getElementById("chat");
+    const div = document.createElement("div");
+    div.className = "msg " + sender;
+    div.innerHTML = linkify(text); // Use innerHTML to render the link
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  document.getElementById("wa-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("wa-in");
+    const text = input.value;
+    input.value = "";
+    appendMsg(text, "me");
+
+    // Send Form Data just like Twilio would
+    const formData = new URLSearchParams();
+    formData.append("Body", text);
+    formData.append("From", phoneNum);
+
+    try {
+      const res = await fetch("/api/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString()
+      });
+      const replyText = await res.text();
+      appendMsg(replyText, "bot");
+    } catch (err) {
+      appendMsg("Network error.", "bot");
+    }
+  };
+</script>
+</body>
+</html>

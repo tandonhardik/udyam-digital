@@ -5,7 +5,7 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Form, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,6 +15,8 @@ from .config import CONSENT_RETENTION_TEXT, CONSENT_VERSION, TODAY
 from .data_store import get_store
 from .gstin import validate_gstin, validate_udyam
 from .privacy import get_logger, mask_id
+
+from . import scoring
 
 log = get_logger("api")
 app = FastAPI(title="Project Udyam Digital")
@@ -97,6 +99,34 @@ def chat(body: ChatIn):
     reply = advisor.step(state, body.message)
     return {"session_id": sid, **reply}
 
+@app.get("/api/session/{session_id}")
+def get_session_state(session_id: str):
+    """Hydrates the frontend when switching devices (WhatsApp to Web) or reloading."""
+    state = SESSIONS.get(session_id)
+    if not state:
+        raise HTTPException(404, "Session not found")
+    
+    # Rebuild their profile and quote from the saved chat state
+    prof = rules.Profile(
+        employees=int(state.get("employees", 1)), 
+        sites=int(state.get("sites", 1)), 
+        city_tier=int(state.get("city_tier", 2)),
+        gstin_status="Active" if state.get("has_gstin") else None,
+        segment=state.get("segment", "micro"), 
+        needs=state.get("needs", [])
+    )
+    rec = rules.recommend(prof)
+    
+    return {
+        "profile": {
+            "employees": prof.employees, 
+            "sites": prof.sites, 
+            "city_tier": prof.city_tier,
+            "has_gstin": bool(state.get("has_gstin"))
+        },
+        "recommendation": rec
+    }
+
 
 # ---------------- quote ----------------
 @app.post("/api/quote")
@@ -166,6 +196,33 @@ def order_status(order_id: str, as_of: date | None = None):
         raise HTTPException(404, "Order not found")
     return s
 
+@app.post("/api/leads/score")
+def score_lead(body: QuoteIn):
+    """
+    Stretch Goal: Propensity Scoring. 
+    Accepts the current lead profile and returns a 0-100 likelihood of activation.
+    """
+    # Convert the incoming Pydantic body to a dictionary for the model
+    profile_data = {
+        "employees": body.employees,
+        "sites": body.sites,
+        "city_tier": body.city_tier,
+        "has_gstin": body.gstin_status == "Active",
+        # We assume segment can be inferred or passed; defaulting to 'micro' if unknown
+        "segment": "micro" 
+    }
+    
+    score = scoring.predict_lead_score(profile_data)
+    
+    # Categorize the lead for the Back-Office Partner view
+    priority = "High" if score >= 70 else "Medium" if score >= 40 else "Low"
+    
+    return {
+        "propensity_score": score,
+        "priority": priority,
+        "recommendation": "Dispatch immediately to field sales" if priority == "High" else "Keep in digital nurture flow"
+    }
+
 
 # ---------------- frontend ----------------
 FRONT = Path(__file__).resolve().parent.parent / "frontend"
@@ -175,3 +232,87 @@ app.mount("/static", StaticFiles(directory=FRONT), name="static")
 @app.get("/")
 def index():
     return FileResponse(FRONT / "index.html")
+
+
+# ---------------- Partner Portal (Back-Office) ----------------
+
+@app.get("/api/partner/leads")
+def get_partner_leads():
+    """Returns all active/abandoned sessions sorted by ML Propensity Score."""
+    leads = []
+    for sid, state in SESSIONS.items():
+        # Only show leads that had at least one interaction
+        transcript = state.get("transcript", [])
+        if not transcript:
+            continue
+            
+        reached_needs = bool(state.get("needs"))
+        reached_quote = bool(state.get("recommendation")) or bool(state.get("needs"))
+
+        # Format the extracted facts for the ML scoring engine
+        profile_data = {
+            "segment": state.get("segment", "micro"),
+            "city_tier": int(state.get("city_tier", 2)),
+            "employees": int(state.get("employees", 1)),
+            "has_gstin": bool(state.get("has_gstin")),
+            "has_udyam": False,
+            "monthly_spend": None,  # Let the ML Imputer handle this!
+            "reached_needs": reached_needs,
+            "reached_quote": reached_quote
+        }
+        
+        # Ask the ML model for a probability score
+        score = scoring.predict_lead_score(profile_data)
+        priority = "High" if score >= 70 else "Medium" if score >= 40 else "Low"
+        
+        leads.append({
+            "session_id": sid,
+            "business_type": state.get("business_type", "Unknown"),
+            "segment": profile_data["segment"],
+            "city_tier": profile_data["city_tier"],
+            "needs": ", ".join(state.get("needs", [])) or "Discovery pending",
+            "has_gstin": profile_data["has_gstin"],
+            "score": score,
+            "priority": priority,
+            "interactions": len(transcript)
+        })
+        
+    # Sort mathematically by score descending (Hottest leads first!)
+    leads.sort(key=lambda x: x["score"], reverse=True)
+    return leads
+
+@app.get("/api/partner/leads/{session_id}/transcript")
+def get_transcript(session_id: str):
+    """Fetches the GenAI chat history so the human rep has full context."""
+    state = SESSIONS.get(session_id)
+    if not state:
+        raise HTTPException(404, "Lead not found")
+    return {"session_id": session_id, "transcript": state.get("transcript", [])}
+
+@app.get("/partner")
+def partner_index():
+    return FileResponse(FRONT / "partner.html")
+
+
+# ---------------- WhatsApp (Omnichannel) Webhook ----------------
+
+@app.post("/api/whatsapp")
+def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
+    """Webhook that processes SMS/WhatsApp messages."""
+    
+    state = SESSIONS.setdefault(From, {})
+    reply = advisor.step(state, Body)
+    msg = reply["message"]
+    
+    if reply.get("done"):
+        # For the local simulator, we just use localhost!
+        local_link = f"http://localhost:8000/?page=quote&session={From.replace('+', '%2B')}"
+        msg += f"\n\n👉 *Your quote is ready!* Click here to view details and upload your KYC documents:\n{local_link}"
+    
+    # Return raw text for our simulator (or TwiML if you ever plug Twilio back in)
+    return Response(content=msg, media_type="text/plain")
+
+# Add this route to serve the simulator page
+@app.get("/whatsapp")
+def whatsapp_simulator():
+    return FileResponse(FRONT / "whatsapp.html")

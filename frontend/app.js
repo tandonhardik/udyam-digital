@@ -2,6 +2,12 @@ const $ = s => document.querySelector(s);
 const S = { sid: null, profile: null, items: [], addons: [], gstinStatus: null, orderId: null };
 const inr = n => "₹" + Math.round(n).toLocaleString("en-IN");
 
+// NEW: Navigation function to simulate physically separate pages
+function navigate(page) {
+  sessionStorage.setItem('udyam_state', JSON.stringify(S)); // Save memory
+  window.location.href = `/?page=${page}&session=${S.sid}`; // Hard reload the browser
+}
+
 function show(id) {
   document.querySelectorAll("main > section").forEach(s => s.hidden = s.id !== id);
   document.querySelectorAll("#steps i").forEach(i => i.classList.toggle("on", i.dataset.s === id));
@@ -25,7 +31,17 @@ async function send(text) {
     if (r.done) {
       S.profile = r.profile; S.items = r.recommendation.items; S.addons = r.recommendation.addons;
       S.gstinStatus = r.profile.has_gstin ? "Active" : null;
-      setTimeout(() => { show("quote"); renderQuote(); }, 900);
+      
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.style.marginTop = "12px";
+      btn.style.width = "fit-content";
+      btn.textContent = "View My Quote";
+      // Clicking now triggers a physical page reload!
+      btn.onclick = () => navigate("quote"); 
+      
+      $("#chat").append(btn);
+      btn.scrollIntoView();
     }
   } catch (e) { bubble("Sorry, something went wrong: " + e.message, "bot"); }
 }
@@ -58,13 +74,8 @@ async function renderQuote() {
   $("#violations").innerHTML = v.map(x => "⚠ " + x).join("<br>");
   $("#toKyc").disabled = !q.valid;
 }
-$("#toKyc").onclick = async () => {
-  show("kyc");
-  const n = await api("/api/consent/notice");
-  $("#consentBody").innerHTML = `<p>${n.purposes.map(p => "• " + p.text).join("<br>")}</p>
-    <p><b>We collect:</b> ${n.data_collected.join(", ")}.<br><b>We do not collect:</b> ${n.not_collected.join(", ")}.</p>
-    <p><b>Retention:</b> ${n.retention}</p><p><small>${n.rights}</small></p>`;
-};
+$("#toKyc").onclick = () => navigate("kyc"); // Reloads page to KYC
+
 // ---------- Consent + KYC ----------
 const syncConsent = () => $("#consentBtn").disabled = !($("#c1").checked && $("#c2").checked);
 $("#c1").onchange = $("#c2").onchange = syncConsent;
@@ -92,7 +103,7 @@ $("#verifyBtn").onclick = async () => {
         $("#placeBtn").hidden = true;
         $("#kycOut").innerHTML += `<div class="fail"><b>Your verified details don't allow some items:</b><br>${Object.values(q.violations).flat().join("<br>")}
           <br><button class="ghost" id="backQuote">Back to quote</button></div>`;
-        $("#backQuote").onclick = () => { show("quote"); renderQuote(); };
+        $("#backQuote").onclick = () => navigate("quote");
       }
     }
   } catch (e) { $("#kycOut").innerHTML = `<div class="fail">${e.message}</div>`; }
@@ -101,12 +112,13 @@ $("#placeBtn").onclick = async () => {
   const p = S.profile;
   try {
     const o = await post("/api/order", { session_id: S.sid, items: S.items, employees: p.employees, sites: p.sites, city_tier: p.city_tier });
-    S.orderId = o.order_id; show("track"); renderTrack(0);
+    S.orderId = o.order_id; navigate("track"); // Reloads page to Track
   } catch (e) {
     const v = e.detail && e.detail.violations ? Object.values(e.detail.violations).flat().join("; ") : "";
     toast(e.message + " " + v);
   }
 };
+
 // ---------- Tracker ----------
 async function renderTrack(ff) {
   const d = new Date("2026-07-15T00:00:00Z"); d.setUTCDate(d.getUTCDate() + ff);
@@ -117,4 +129,48 @@ async function renderTrack(ff) {
 }
 $("#ff").oninput = e => { $("#ffv").textContent = e.target.value == 0 ? "today" : `+${e.target.value} days`; renderTrack(+e.target.value); };
 
-show("advisor"); bubble("Namaste! I'm your Accel Business advisor. Tell me about your business: what do you run, and where?\nनमस्ते! अपने व्यापार के बारे में बताइए।", "bot");
+// ---------- App Initialization & Routing ----------
+async function init() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const targetPage = urlParams.get('page') || 'advisor';
+  
+  // 1. Load saved state if available (for standard flow)
+  const saved = sessionStorage.getItem('udyam_state');
+  if (saved) { Object.assign(S, JSON.parse(saved)); }
+  
+  // 2. Override session ID if coming from WhatsApp link
+  if (urlParams.has('session')) { S.sid = urlParams.get('session'); }
+
+  // 3. HYDRATE STATE: If arriving from WhatsApp, memory is empty. Fetch from backend!
+  if (S.sid && (targetPage === 'quote' || targetPage === 'kyc') && !S.profile) {
+      try {
+          const data = await api(`/api/session/${S.sid}`);
+          S.profile = data.profile;
+          S.items = data.recommendation.items;
+          S.addons = data.recommendation.addons;
+          S.gstinStatus = data.profile.has_gstin ? "Active" : null;
+          sessionStorage.setItem('udyam_state', JSON.stringify(S)); // Save it so reloads work
+      } catch (e) {
+          console.error("Hydration failed", e);
+      }
+  }
+
+  show(targetPage);
+
+  // 4. Trigger page-specific rendering
+  if (targetPage === 'advisor' && !saved) {
+    bubble("Namaste! I'm your Accel Business advisor. Tell me about your business: what do you run, and where?\nनमस्ते! अपने व्यापार के बारे में बताइए।", "bot");
+  } else if (targetPage === 'quote') {
+    renderQuote();
+  } else if (targetPage === 'kyc') {
+    api("/api/consent/notice").then(n => {
+      $("#consentBody").innerHTML = `<p>${n.purposes.map(p => "• " + p.text).join("<br>")}</p>
+        <p><b>We collect:</b> ${n.data_collected.join(", ")}.<br><b>We do not collect:</b> ${n.not_collected.join(", ")}.</p>
+        <p><b>Retention:</b> ${n.retention}</p><p><small>${n.rights}</small></p>`;
+    });
+  } else if (targetPage === 'track') {
+    renderTrack(0);
+  }
+}
+
+init();

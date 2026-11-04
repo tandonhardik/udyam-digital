@@ -158,26 +158,44 @@ def llm_extract(text: str, state: dict) -> dict | None:
         f"needs (list, subset of {list(NEED_WORDS)}). Omit keys that are not mentioned. "
         f"The assistant just asked about: {state.get('awaiting')}. Message: {text}"
     )
-    data = llm.chat_json(prompt)
-    if not isinstance(data, dict):
+    raw_data = llm.chat_json(prompt)
+    
+    if not isinstance(raw_data, dict):
         return None
+        
+    # FIX: Force all JSON keys to lowercase to prevent case-sensitivity bugs!
+    data = {str(k).lower().strip(): v for k, v in raw_data.items()}
+    
     # Never trust the model blindly: keep only known keys with sane types.
     clean: dict = {}
+    
     for k in ("employees", "sites"):
         if isinstance(data.get(k), (int, float)) and 0 < data[k] < 100000:
             clean[k] = int(data[k])
-    if data.get("city_tier") in (1, 2):
-        clean["city_tier"] = data["city_tier"]
-    if data.get("segment") in ("micro", "professional", "multisite", "manufacturer"):
-        clean["segment"] = data["segment"]
+            
+    if str(data.get("city_tier")) in ("1", "2"):
+        clean["city_tier"] = int(data["city_tier"])
+        
+    # Force lowercase on the values as well
+    seg = str(data.get("segment", "")).strip().lower()
+    if seg in ("micro", "professional", "multisite", "manufacturer"):
+        clean["segment"] = seg
+        
     for k in ("business_type", "city"):
-        if isinstance(data.get(k), str) and data[k].strip():
-            clean[k] = data[k].strip()[:60]
-    if isinstance(data.get("has_gstin"), bool):
-        clean["has_gstin"] = data["has_gstin"]
-    needs = [n for n in (data.get("needs") or []) if n in NEED_WORDS]
+        if data.get(k):
+            clean[k] = str(data[k]).strip()[:60]
+            
+    # Handle string booleans ("true", "yes") just in case
+    has_gstin = data.get("has_gstin")
+    if isinstance(has_gstin, bool):
+        clean["has_gstin"] = has_gstin
+    elif isinstance(has_gstin, str):
+        clean["has_gstin"] = has_gstin.strip().lower() in ("true", "yes", "y", "1")
+        
+    needs = [str(n).lower() for n in (data.get("needs") or []) if str(n).lower() in NEED_WORDS]
     if needs:
         clean["needs"] = needs
+        
     return clean or None
 
 
@@ -212,6 +230,12 @@ def step(state: dict, text: str) -> dict:
     for k, v in facts.items():
         if v not in (None, "", []):
             state[k] = v
+
+    # --- ADD THESE TWO LINES ---
+    if "city" in state and "city_tier" not in state:
+        state["city_tier"] = 1 if any(c in state["city"].lower() for c in TIER1) else 2
+    # ---------------------------
+
     if state.get("segment") in ("micro", "professional") and "sites" not in state:
         state["sites"] = 1  # single-site by default; no need to ask
 
@@ -245,4 +269,5 @@ def step(state: dict, text: str) -> dict:
                       f"Output only the translation.\n\n{reply['message']}", max_tokens=500)
         reply["message"] = tx or reply["message"]
     state["transcript"].append({"role": "assistant", "text": reply["message"]})
+    
     return reply

@@ -2,8 +2,10 @@
 import os
 from datetime import date
 from pathlib import Path
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=ROOT / ".env")
 DATA_DIR = Path(os.getenv("UDYAM_DATA_DIR", ROOT / "data"))
 
 # The case README says: use 2026-07-15 as "today" for every date check.
@@ -12,9 +14,9 @@ ADDRESS_PROOF_MAX_AGE_DAYS = 90
 
 # Optional: set GROQ_API_KEY to let an LLM do intent extraction / explanations.
 # Without it the advisor runs fully offline on the rule-based fallback (demo-safe).
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Groq retires models over time; check console.groq.com/docs/models and override via env if needed.
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # KYC images are processed in memory and never written to disk (DPDP storage limitation).
 CONSENT_VERSION = "v1-2026-07"

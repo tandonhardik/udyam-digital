@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partner Portal · Accel Business</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  /* Extra styles specific to the dashboard */
+  .dashboard { max-width: 900px; margin: auto; padding: 20px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--line); font-size: 14px; }
+  th { background: #f4f4f5; font-weight: 600; color: var(--mut); }
+  .badge { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+  .badge.high { background: #fee2e2; color: #b91c1c; }
+  .badge.medium { background: #fef3c7; color: #b45309; }
+  .badge.low { background: #f3f4f6; color: #374151; }
+  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
+  #modal-content { background: #fff; width: 500px; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden;}
+  #modal-header { display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid var(--line); font-weight: bold; }
+  #modal-body { padding: 16px; overflow-y: auto; flex: 1; background: var(--bg); display: flex; flex-direction: column; gap: 8px;}
+</style>
+</head>
+<body>
+<header style="max-width: 900px; margin: auto;">
+  <b>Accel Business</b><span>Partner Portal (Lead Scoring)</span>
+  <button onclick="loadLeads()">↻ Refresh Leads</button>
+</header>
+<main class="dashboard">
+  <h2>Live Digital Drop-offs</h2>
+  <p style="color: var(--mut); font-size: 14px;">Leads are scored dynamically using the ML Propensity Engine (Random Forest).</p>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>ML Score</th>
+        <th>Business Type</th>
+        <th>Tier / GSTIN</th>
+        <th>Identified Needs</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="leads-body">
+      <tr><td colspan="5" style="text-align: center;">Loading leads...</td></tr>
+    </tbody>
+  </table>
+</main>
+
+<!-- Transcript Modal -->
+<div id="modal">
+  <div id="modal-content">
+    <div id="modal-header">
+      <span>AI Discovery Transcript</span>
+      <button onclick="document.getElementById('modal').style.display='none'" style="border:none; background:transparent; cursor:pointer;">✖</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/partner.js"></script>
+</body>
+</html>
