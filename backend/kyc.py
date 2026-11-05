@@ -29,15 +29,25 @@ def _deskew(gray: np.ndarray) -> np.ndarray:
             gray = np.rot90(gray, k=rot // 90 * -1 % 4)
     except Exception:
         pass
+        
     ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    coords = np.column_stack(np.where(ink > 0))
+    
+    # CRITICAL FIX: Crop 5% of the edges before calculating the angle!
+    # Otherwise, dark image borders will lock the minAreaRect angle to 0 degrees.
+    h, w = ink.shape
+    margin_y, margin_x = int(h * 0.05), int(w * 0.05)
+    crop = ink[margin_y:h - margin_y, margin_x:w - margin_x]
+    
+    coords = np.column_stack(np.where(crop > 0))
     if len(coords) < 200:
         return gray
+        
     angle = cv2.minAreaRect(coords)[-1]
     angle = -(90 + angle) if angle < -45 else -angle if angle < 45 else 90 - angle
+    
     if abs(angle) < 0.5 or abs(angle) > 30:
         return np.ascontiguousarray(gray)
-    h, w = gray.shape
+        
     M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
     return cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
@@ -50,10 +60,22 @@ def _variants(data: bytes):
     gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
     if max(gray.shape) < 1400:
         gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        
     clean = np.where(gray < 150, 0, 255).astype(np.uint8)
+    
+    # Pass 1 & 2: Standard attempts
     yield pytesseract.image_to_string(clean, config="--psm 6")
     yield pytesseract.image_to_string(gray, config="--psm 4")
-    yield pytesseract.image_to_string(_deskew(clean), config="--psm 6")
+    
+    # Pass 3, 4, 5: Deskewed attempts utilizing PSM 4 (Assume a single column of text of variable sizes)
+    deskewed_clean = _deskew(clean)
+    deskewed_gray = _deskew(gray)
+    
+    yield pytesseract.image_to_string(deskewed_clean, config="--psm 4")
+    yield pytesseract.image_to_string(deskewed_clean, config="--psm 6")
+    yield pytesseract.image_to_string(deskewed_gray, config="--psm 4")
+    
+    # Pass 6: Last resort messy extraction
     yield pytesseract.image_to_string(clean, config="--psm 11")
 
 

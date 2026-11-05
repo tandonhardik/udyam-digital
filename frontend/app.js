@@ -83,30 +83,56 @@ $("#consentBtn").onclick = async () => {
   await post("/api/consent", { session_id: S.sid, purposes: ["kyc_verification", "service_provisioning"], accepted: true });
   $("#consent").hidden = true; $("#upload").hidden = false;
 };
-$("#digi").onclick = () => toast("DigiLocker integration is on the roadmap");
 $("#verifyBtn").onclick = async () => {
-  const fs = $("#files").files; if (!fs.length) return toast("Choose your document photos first");
-  const fd = new FormData(); [...fs].forEach(f => fd.append("files", f));
+  const fs = $("#files").files; 
+  if (!fs.length) return toast("Choose your document photos first");
+  
+  const fd = new FormData(); 
+  [...fs].forEach(f => fd.append("files", f));
+  
   $("#kycOut").textContent = "Reading documents…";
+  
   try {
     const r = await api(`/api/kyc/verify?session_id=${S.sid}`, { method: "POST", body: fd });
+    
+    // 1. Map uploaded files
     const docs = r.documents.map(d => `<div class="row"><span>${d.file}</span><span>${d.type}</span></div>`).join("");
-    const checks = r.checks.map(c => `<div class="pass">✔ ${c.label}</div>`).join("");
+    
+    // 2. Map issues (errors/warnings) so the user knows exactly why it was rejected
     const issues = r.issues.map(i => `<div class="${i.severity === "error" ? "fail" : "warn"}">${i.severity === "info" ? "ℹ" : i.severity === "error" ? "✖" : "⚠"} ${i.message}</div>`).join("");
-    $("#kycOut").innerHTML = `<h3 class="${r.verdict === "approved" ? "pass" : "fail"}">${r.verdict.toUpperCase()}</h3>${docs}${checks}${issues}`;
+    
+    // 3. Create a generic, secure success message if approved
+    const successMsg = r.verdict === "approved" ? `<div class="pass" style="margin-top: 10px; font-weight: bold;">✔ All business documents verified successfully.</div>` : "";
+
+    // 4. Update the UI without exposing the granular internal 'checks' array
+    $("#kycOut").innerHTML = `<h3 class="${r.verdict === "approved" ? "pass" : "fail"}">${r.verdict.toUpperCase()}</h3>${docs}${successMsg}${issues}`;
+    
     if (r.gst_status) S.gstinStatus = r.gst_status;
+    
+    // Only show the "Place order" button if KYC is approved
     $("#placeBtn").hidden = r.verdict !== "approved";
+    
+    // If approved, verify that the active quote is still valid given the new KYC details
     if (r.verdict === "approved") {
       const p = S.profile;
-      const q = await post("/api/quote", { items: S.items, employees: p.employees, sites: p.sites, city_tier: p.city_tier, gstin_status: S.gstinStatus });
+      const q = await post("/api/quote", { 
+        items: S.items, 
+        employees: p.employees, 
+        sites: p.sites, 
+        city_tier: p.city_tier, 
+        gstin_status: S.gstinStatus 
+      });
+      
       if (!q.valid) {
         $("#placeBtn").hidden = true;
-        $("#kycOut").innerHTML += `<div class="fail"><b>Your verified details don't allow some items:</b><br>${Object.values(q.violations).flat().join("<br>")}
-          <br><button class="ghost" id="backQuote">Back to quote</button></div>`;
+        $("#kycOut").innerHTML += `<div class="fail" style="margin-top: 12px;"><b>Your verified details don't allow some items:</b><br>${Object.values(q.violations).flat().join("<br>")}
+          <br><button class="ghost" id="backQuote" style="margin-top: 8px;">Back to quote</button></div>`;
         $("#backQuote").onclick = () => navigate("quote");
       }
     }
-  } catch (e) { $("#kycOut").innerHTML = `<div class="fail">${e.message}</div>`; }
+  } catch (e) { 
+    $("#kycOut").innerHTML = `<div class="fail">${e.message}</div>`; 
+  }
 };
 $("#placeBtn").onclick = async () => {
   const p = S.profile;
