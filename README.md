@@ -51,12 +51,29 @@ python -m pytest -q tests/test_real_data.py    # engine against all 5,000 real l
 ```
 
 ## Layout
-```
-backend/   main.py (API, sessions, auth) · advisor.py · llm.py (Groq, optional) · rules.py (eligibility + pricing)
-           kyc.py (OCR + checks) · scoring.py (propensity) · tracker.py · privacy.py · config.py
-frontend/  index.html + app.js (customer) · partner.html + partner.js (back-office) · whatsapp.html (simulator)
-scripts/   train_propensity.py · check_data.py
-tests/     core, real-data, stretch goals, LLM client
+
+```text
+udyam-digital/
+├── backend/
+│   ├── main.py            API, sessions, partner auth
+│   ├── advisor.py         multilingual discovery chat
+│   ├── llm.py             Groq client (optional)
+│   ├── rules.py           eligibility and pricing engine
+│   ├── kyc.py             OCR and document checks
+│   ├── scoring.py         lead propensity scoring
+│   ├── tracker.py         order tracker
+│   ├── privacy.py         masking for logs and transcripts
+│   └── config.py          settings and limits
+├── frontend/
+│   ├── index.html         customer app
+│   ├── app.js
+│   ├── partner.html       back-office
+│   ├── partner.js
+│   └── whatsapp.html      WhatsApp simulator
+├── scripts/
+│   ├── train_propensity.py
+│   └── check_data.py
+└── tests/                 core, real-data, stretch goals, LLM client
 ```
 
 ## Known limits
