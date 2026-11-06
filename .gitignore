@@ -8,10 +8,8 @@ __pycache__/
 .pytest_cache/
 
 # organiser data and anything derived from it (re-create with scripts/train_propensity.py)
-data/*.csv
 data/*.joblib
 !tests/fixtures/*.csv
-kyc_documents/
 
 # editors / OS
 .vscode/
