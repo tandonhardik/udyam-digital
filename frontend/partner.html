@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/static/style.css">
 <style>
   /* Extra styles specific to the dashboard */
-  .dashboard { max-width: 900px; margin: auto; padding: 20px; }
+  .dashboard { max-width: 1100px; margin: auto; padding: 20px; }
   table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--line); font-size: 14px; }
   th { background: #f4f4f5; font-weight: 600; color: var(--mut); }
@@ -15,6 +15,8 @@
   .badge.high { background: #fee2e2; color: #b91c1c; }
   .badge.medium { background: #fef3c7; color: #b45309; }
   .badge.low { background: #f3f4f6; color: #374151; }
+  .badge.dropped{background:#fee2e2;color:#b91c1c}.badge.active{background:#dcfce7;color:#166534}
+  .reasons{color:#6b6b70;font-size:12px}
   #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
   #modal-content { background: #fff; width: 500px; max-height: 80vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden;}
   #modal-header { display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid var(--line); font-weight: bold; }
@@ -22,26 +24,23 @@
 </style>
 </head>
 <body>
-<header style="max-width: 900px; margin: auto;">
+<header style="max-width: 1100px; margin: auto;">
   <b>Accel Business</b><span>Partner Portal (Lead Scoring)</span>
   <button onclick="loadLeads()">↻ Refresh Leads</button>
+  <button onclick="setToken()">🔑 Token</button>
 </header>
 <main class="dashboard">
   <h2>Live Digital Drop-offs</h2>
-  <p style="color: var(--mut); font-size: 14px;">Leads are scored dynamically using the ML Propensity Engine (Random Forest).</p>
-  
+  <p id="model-info" style="color: var(--mut); font-size: 14px;"></p>
+
   <table>
     <thead>
       <tr>
-        <th>ML Score</th>
-        <th>Business Type</th>
-        <th>Tier / GSTIN</th>
-        <th>Identified Needs</th>
-        <th>Action</th>
+        <th>Score</th><th>Business</th><th>Stage / Status</th><th>Why this score</th><th>Next action</th><th></th>
       </tr>
     </thead>
     <tbody id="leads-body">
-      <tr><td colspan="5" style="text-align: center;">Loading leads...</td></tr>
+      <tr><td colspan="6" style="text-align: center;">Loading leads...</td></tr>
     </tbody>
   </table>
 </main>

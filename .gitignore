@@ -1,38 +1,19 @@
-# Secrets and Environment Variables
+# secrets
 .env
-.env.*
 
-# Python Virtual Environments
-venv/
+# python
 .venv/
-env/
-.env_folder/
-
-# Python Cache & Bytecode
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+.pytest_cache/
 
-# Machine Learning Models & Data
-*.joblib
-*.pkl
-*.model
+# organiser data and anything derived from it (re-create with scripts/train_propensity.py)
+data/*.csv
+data/*.joblib
+!tests/fixtures/*.csv
+kyc_documents/
 
-# FastAPI / Uvicorn Logs
-*.log
-
-# OS Generated Files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# IDEs and Editors
+# editors / OS
 .vscode/
 .idea/
-*.swp
-*.swo
+.DS_Store

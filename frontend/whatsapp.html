@@ -8,7 +8,7 @@
   body { margin: 0; background: #e5ddd5; font-family: sans-serif; display: flex; justify-content: center; height: 100vh; }
   .phone { width: 100%; max-width: 400px; background: #efeae2; display: flex; flex-direction: column; height: 100%; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
   .header { background: #075e54; color: white; padding: 15px; font-weight: bold; font-size: 18px; display: flex; align-items: center; gap: 10px; }
-  .chat { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); }
+  .chat { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 80%; padding: 10px 14px; border-radius: 8px; font-size: 15px; line-height: 1.4; white-space: pre-wrap; position: relative; }
   .bot { background: #fff; align-self: flex-start; border-radius: 0 8px 8px 8px; }
   .me { background: #dcf8c6; align-self: flex-end; border-radius: 8px 0 8px 8px; }
@@ -25,7 +25,7 @@
     <div style="width:35px; height:35px; background:#ccc; border-radius:50%; display:inline-block;"></div>
     Accel Business AI
   </div>
-  
+
   <div class="chat" id="chat">
     <div class="msg bot">Type 'Hi' to start chatting with your AI Advisor!</div>
   </div>
@@ -37,21 +37,20 @@
 </div>
 
 <script>
-  const phoneNum = "+919876543210"; // Simulated user phone number (Session ID)
-  
-  // URLify function to make links clickable in the chat
-  function linkify(text) {
-      const urlRegex = /(https?:\/\/[^\s]+)/g;
-      return text.replace(urlRegex, function(url) {
-          return '<a href="' + url + '" target="_blank">' + url + '</a>';
-      });
-  }
+  const phoneNum = "+919876543210"; // Simulated user phone number (the server turns it into a hashed session id)
 
+  // Build the message with DOM nodes (textContent) so nothing from the server is ever parsed as HTML.
   function appendMsg(text, sender) {
     const chat = document.getElementById("chat");
     const div = document.createElement("div");
     div.className = "msg " + sender;
-    div.innerHTML = linkify(text); // Use innerHTML to render the link
+    text.split(/(https?:\/\/[^\s]+)/g).forEach(part => {
+      if (/^https?:\/\//.test(part)) {
+        const a = document.createElement("a");
+        a.href = part; a.target = "_blank"; a.rel = "noopener"; a.textContent = part;
+        div.appendChild(a);
+      } else div.appendChild(document.createTextNode(part));
+    });
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
   }

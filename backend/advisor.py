@@ -231,10 +231,9 @@ def step(state: dict, text: str) -> dict:
         if v not in (None, "", []):
             state[k] = v
 
-    # --- ADD THESE TWO LINES ---
+    # A city named in chat decides the tier
     if "city" in state and "city_tier" not in state:
         state["city_tier"] = 1 if any(c in state["city"].lower() for c in TIER1) else 2
-    # ---------------------------
 
     if state.get("segment") in ("micro", "professional") and "sites" not in state:
         state["sites"] = 1  # single-site by default; no need to ask

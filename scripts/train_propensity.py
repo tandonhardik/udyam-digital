@@ -1,95 +1,89 @@
-# FILE: scripts/train_propensity.py
-import pandas as pd
-import joblib
+"""Train the lead-propensity model from smb_leads.csv.      Run from the project folder:
+
+    python scripts/train_propensity.py
+
+What it does (and why):
+  * Features are ONLY facts the app can see in a live chat (segment, city tier, team size, sites, GSTIN, channel,
+    language), so training and inference match.
+  * Funnel-stage flags (contacted / needs / quote reached) are NOT features. They are almost the label itself
+    (everyone who activated passed every stage) and gave a misleading 0.96 AUC. The stage is used as a calibrated
+    prior at scoring time instead (see backend/scoring.py).
+  * Logistic regression is used over a random forest: it scored better (0.71 vs 0.69 CV AUC), is already
+    calibrated, and can explain each score.
+"""
+import sys
 from pathlib import Path
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import joblib
+import numpy as np
+import pandas as pd
+import sklearn
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
-MODEL_PATH = DATA_DIR / "propensity_model.joblib"
+from backend.config import DATA_DIR
+from backend.scoring import CATS, MODEL_PATH, NUMS
 
-def train():
-    print("Loading smb_leads.csv...")
-    df = pd.read_csv(DATA_DIR / "smb_leads.csv")
-    
-    # 1. Define Target: 1 if Activated, 0 if Dropped
-    y = (df['outcome'].str.strip().str.lower() == 'activated').astype(int)
-    
-    # 2. Feature Engineering (The Secret Sauce)
-    
-    # Convert string booleans to integers
-    df['has_gstin'] = df['has_gstin'].astype(str).str.upper().map({'Y': 1, 'YES': 1, 'TRUE': 1, '1': 1}).fillna(0)
-    df['has_udyam'] = df['has_udyam'].astype(str).str.upper().map({'Y': 1, 'YES': 1, 'TRUE': 1, '1': 1}).fillna(0)
-    
-    # Clean numeric fields
-    df['employee_count'] = pd.to_numeric(df['employee_count'], errors='coerce').fillna(1)
-    df['city_tier'] = pd.to_numeric(df['city_tier'], errors='coerce').fillna(2)
-    df['monthly_spend'] = pd.to_numeric(df['monthly_telecom_spend_inr'], errors='coerce').fillna(0)
-    
-    # Extract "Funnel Depth" - How far did they get before dropping?
-    # If a date exists in these columns, they reached that stage.
-    df['reached_contacted'] = df['contacted_date'].notna().astype(int)
-    df['reached_needs'] = df['needs_assessed_date'].notna().astype(int)
-    df['reached_quote'] = df['quote_accepted_date'].notna().astype(int)
-    
-    # Select our upgraded feature list
-    features = [
-        'segment', 'city_tier', 'employee_count', 'has_gstin', 
-        'has_udyam', 'monthly_spend', 'reached_contacted', 
-        'reached_needs', 'reached_quote'
-    ]
-    X = df[features]
-    
-    # 3. Build Preprocessing Pipeline
-    numeric_features = [
-        'city_tier', 'employee_count', 'has_gstin', 'has_udyam', 
-        'monthly_spend', 'reached_contacted', 'reached_needs', 'reached_quote'
-    ]
-    categorical_features = ['segment']
-    
-    preprocessor = ColumnTransformer(
-        transformers=[
-            # Random Forests don't need StandardScaling, just handle missing values
-            ('num', SimpleImputer(strategy='median'), numeric_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-        ])
-    
-    # 4. Create and Train the Random Forest Model
-    clf = Pipeline(steps=[
-        ('preprocessor', preprocessor),
-        ('classifier', RandomForestClassifier(
-            n_estimators=100, 
-            max_depth=5,              # Prevent overfitting
-            class_weight='balanced',  # Crucial for the 7% activation rate
-            random_state=42
-        )) 
-    ])
-    
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    print("Training Random Forest model...")
-    clf.fit(X_train, y_train)
-    
-    # Let's look at a better metric for imbalanced data: ROC-AUC or just balanced accuracy
-    from sklearn.metrics import roc_auc_score, classification_report
-    
-    # Predict probabilities for the test set
-    y_probs = clf.predict_proba(X_test)[:, 1]
-    y_pred = clf.predict(X_test)
-    
-    auc = roc_auc_score(y_test, y_probs)
-    print(f"\nModel trained! ROC-AUC Score: {auc:.3f} (closer to 1.0 is better)")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
-    
-    # 5. Save the model
-    joblib.dump(clf, MODEL_PATH)
+STAGE_COLS = {"contacted": "contacted_date", "needs_assessed": "needs_assessed_date",
+              "quote_accepted": "quote_accepted_date", "kyc_complete": "kyc_complete_date"}
+
+
+def yes(col: pd.Series) -> pd.Series:
+    return col.astype(str).str.strip().str.upper().isin(["Y", "YES", "TRUE", "1"]).astype(int)
+
+
+def build_frame(df: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "segment": df["segment"].fillna("unknown"),
+        "city_tier": pd.to_numeric(df["city_tier"], errors="coerce").fillna(2).astype(int).astype(str),
+        "lead_source": df["lead_source"].fillna("unknown"),
+        "lang": df["preferred_language"].fillna("English"),
+        "log_emp": np.log1p(pd.to_numeric(df["employee_count"], errors="coerce").fillna(1)),
+        "sites": pd.to_numeric(df["num_sites"], errors="coerce").fillna(1),
+        "has_gstin": yes(df["has_gstin"]),
+    })
+
+
+def train() -> None:
+    path = DATA_DIR / "smb_leads.csv"
+    print(f"Loading {path} ...")
+    df = pd.read_csv(path)
+    y = (df["outcome"].str.strip().str.lower() == "activated").astype(int).values
+    X = build_frame(df)
+
+    pre = ColumnTransformer([("c", OneHotEncoder(handle_unknown="ignore"), CATS), ("n", StandardScaler(), NUMS)])
+    pipe = Pipeline([("p", pre), ("m", LogisticRegression(C=0.5, max_iter=2000))])
+
+    # Honest evaluation: out-of-fold predictions, never scored on rows the model trained on.
+    oof = cross_val_predict(pipe, X, y, cv=StratifiedKFold(5, shuffle=True, random_state=0), method="predict_proba")[:, 1]
+    auc = roc_auc_score(y, oof)
+    k = len(y) // 10
+    top = np.argsort(-oof)[:k]
+    lift = y[top].mean() / y.mean()
+    print(f"\nCross-validated ROC-AUC (profile only): {auc:.3f}")
+    print(f"Top-decile lift: top 10% of leads hold {100 * y[top].mean():.1f}% activations vs {100 * y.mean():.1f}% overall ({lift:.1f}x)")
+    print(f"Mean predicted {100 * oof.mean():.1f}% vs actual {100 * y.mean():.1f}%  (calibration check)")
+
+    stage_prior = {"lead": float(y.mean())}
+    for stage, col in STAGE_COLS.items():
+        stage_prior[stage] = float(y[df[col].notna().values].mean())
+    print("\nP(activate | stage reached):  " + "   ".join(f"{s}: {100 * p:.1f}%" for s, p in stage_prior.items()))
+
+    pipe.fit(X, y)
+    feat_mean = pipe.named_steps["p"].transform(X)
+    feat_mean = np.asarray(feat_mean.mean(axis=0)).ravel()
+    artifact = {"pipeline": pipe, "base_rate": float(y.mean()), "stage_prior": stage_prior, "feat_mean": feat_mean,
+                "metrics": {"cv_auc": float(auc), "top_decile_lift": float(lift), "n": int(len(y))},
+                "sklearn": sklearn.__version__, "version": 2}
+    joblib.dump(artifact, MODEL_PATH)
     print(f"\nModel saved to {MODEL_PATH}")
+
 
 if __name__ == "__main__":
     train()

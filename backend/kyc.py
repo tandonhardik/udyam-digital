@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -20,63 +21,69 @@ log = get_logger("kyc")
 
 # ---------------- OCR ----------------
 
+def _rotate(img: np.ndarray, angle: float) -> np.ndarray:
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    cos, sin = abs(M[0, 0]), abs(M[0, 1])
+    nw, nh = int(h * sin + w * cos), int(h * cos + w * sin)
+    M[0, 2] += nw / 2 - w / 2
+    M[1, 2] += nh / 2 - h / 2
+    return cv2.warpAffine(img, M, (nw, nh), flags=cv2.INTER_CUBIC, borderValue=255)
+
+
+def _skew_angle(binary: np.ndarray) -> float:
+    """Angle (degrees) to rotate by so text lines are horizontal. Projection-profile search: sign-agnostic and
+    robust to page borders, because straight text rows give the sharpest row-sum profile."""
+    scale = 700 / max(binary.shape)
+    small = cv2.resize(255 - binary, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    def score(a: float) -> float:
+        return float(np.var(_rotate_ink(small, a).sum(axis=1)))
+
+    best = max(range(-35, 36), key=score)
+    fine = [best + d / 4 for d in range(-4, 5)]
+    return max(fine, key=score)
+
+
+def _rotate_ink(img: np.ndarray, angle: float) -> np.ndarray:
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
+
+
 def _deskew(gray: np.ndarray) -> np.ndarray:
-    """Straighten tilted scans. Tries Tesseract OSD first, then min-area-rect on ink pixels."""
+    """Straighten first, THEN ask Tesseract for 90/180/270 orientation. OSD is unreliable on tilted pages
+    (it reports 'upside-down' for some tilts), but dependable on straight text. A final pass removes leftover tilt."""
+    def level(img: np.ndarray) -> np.ndarray:
+        ang = _skew_angle(img)
+        return img if abs(ang) < 0.5 else _rotate(img, ang)
+
+    img = level(gray)
     try:
-        osd = pytesseract.image_to_osd(gray, config="--psm 0", output_type=pytesseract.Output.DICT)
+        osd = pytesseract.image_to_osd(img, config="--psm 0", output_type=pytesseract.Output.DICT)
         rot = int(osd.get("rotate", 0))
-        if rot:
-            gray = np.rot90(gray, k=rot // 90 * -1 % 4)
+        if rot and float(osd.get("orientation_conf", 0)) >= 1.0:
+            img = level(np.ascontiguousarray(np.rot90(img, k=rot // 90 * -1 % 4)))
     except Exception:
         pass
-        
-    ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    
-    # CRITICAL FIX: Crop 5% of the edges before calculating the angle!
-    # Otherwise, dark image borders will lock the minAreaRect angle to 0 degrees.
-    h, w = ink.shape
-    margin_y, margin_x = int(h * 0.05), int(w * 0.05)
-    crop = ink[margin_y:h - margin_y, margin_x:w - margin_x]
-    
-    coords = np.column_stack(np.where(crop > 0))
-    if len(coords) < 200:
-        return gray
-        
-    angle = cv2.minAreaRect(coords)[-1]
-    angle = -(90 + angle) if angle < -45 else -angle if angle < 45 else 90 - angle
-    
-    if abs(angle) < 0.5 or abs(angle) > 30:
-        return np.ascontiguousarray(gray)
-        
-    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
-    return cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return np.ascontiguousarray(img)
 
 
 def _variants(data: bytes):
-    """Yield OCR texts lazily, cheapest/most useful first. The 'clean' pass drops the pale watermark."""
+    """Yield OCR texts lazily. Straightening comes first: tilted scans are unreadable otherwise.
+    The 'clean' image drops the pale watermark (only dark text survives)."""
     arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if arr is None:
         raise ValueError("Could not read image")
     gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
     if max(gray.shape) < 1400:
         gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        
     clean = np.where(gray < 150, 0, 255).astype(np.uint8)
-    
-    # Pass 1 & 2: Standard attempts
-    yield pytesseract.image_to_string(clean, config="--psm 6")
-    yield pytesseract.image_to_string(gray, config="--psm 4")
-    
-    # Pass 3, 4, 5: Deskewed attempts utilizing PSM 4 (Assume a single column of text of variable sizes)
-    deskewed_clean = _deskew(clean)
-    deskewed_gray = _deskew(gray)
-    
-    yield pytesseract.image_to_string(deskewed_clean, config="--psm 4")
-    yield pytesseract.image_to_string(deskewed_clean, config="--psm 6")
-    yield pytesseract.image_to_string(deskewed_gray, config="--psm 4")
-    
-    # Pass 6: Last resort messy extraction
-    yield pytesseract.image_to_string(clean, config="--psm 11")
+    straight = _deskew(clean)
+    yield pytesseract.image_to_string(straight, config="--psm 6")
+    yield pytesseract.image_to_string(straight, config="--psm 4")
+    yield pytesseract.image_to_string(straight, config="--psm 11")
+    yield pytesseract.image_to_string(clean, config="--psm 6")      # original orientation, in case straightening hurt
 
 
 def ocr_bytes(data: bytes) -> str:
@@ -167,31 +174,40 @@ _CONF = {"I": "T1L", "T": "I", "1": "IL", "L": "1I", "O": "0Q", "0": "O", "S": "
          "Z": "2", "2": "Z", "G": "6", "6": "G", "D": "0", "Q": "O"}
 
 
+def _wlev(a: str, b: str) -> float:
+    """Edit distance for OCR repair: look-alike substitutions (I/T, 1/L, 5/S ...) cost 0.5, a stray or missing character
+    costs 1, and any other substitution is effectively forbidden (3). So a genuinely wrong digit is NOT 'fixed'."""
+    prev = [float(j) for j in range(len(b) + 1)]
+    for i in range(1, len(a) + 1):
+        cur = [float(i)] + [0.0] * len(b)
+        for j in range(1, len(b) + 1):
+            sub = 0.0 if a[i - 1] == b[j - 1] else 0.5 if b[j - 1] in _CONF.get(a[i - 1], "") else 3.0
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + sub)
+        prev = cur
+    return prev[-1]
+
+
+@lru_cache(maxsize=256)
 def repair_gstin(raw: str) -> tuple[str, bool]:
-    """Return (gstin, corrected). Accepts a repair only if it passes the checksum and exists in the registry."""
-    from itertools import combinations, product
-    g = normalise(raw)
-    g = re.sub(r"[^0-9A-Z]", "", g)[:16]
+    """Return (gstin, corrected). Repairs OCR slips (wrong, extra or missing characters) but ONLY to a GSTIN that
+    passes the checksum, exists in the registry, and is clearly closer than any other registry entry."""
+    g = re.sub(r"[^0-9A-Z]", "", normalise(raw))[:18]
     if len(g) == 15 and validate_gstin(g)[0]:
         return g, False
-    store = get_store()
-    if len(g) == 16:                                   # OCR inserted a stray character: try deleting each one
-        for i in range(16):
-            cand = g[:i] + g[i + 1:]
-            if validate_gstin(cand)[0] and store.lookup_gstin(cand):
-                return cand, True
+    if len(g) < 12:
         return g, False
-    if len(g) != 15:
-        return g, False
-    for n in (1, 2):
-        for idxs in combinations(range(14), n):
-            for subs in product(*[_CONF.get(g[i], "") for i in idxs]):
-                c = list(g)
-                for i, ch in zip(idxs, subs):
-                    c[i] = ch
-                cand = "".join(c)
-                if validate_gstin(cand)[0] and store.lookup_gstin(cand):
-                    return cand, True
+    best: list[tuple[float, str]] = []
+    for cand in get_store().gstin:
+        # cheap pre-filter: enough characters must line up at shift -1, 0 or +1
+        if max(sum(x == y for x, y in zip(g, cand)), sum(x == y for x, y in zip(g[1:], cand)),
+               sum(x == y for x, y in zip(g, cand[1:]))) < 8:
+            continue
+        d = _wlev(g, cand)
+        if d <= 1.5:        # e.g. up to 3 look-alikes, or 1 stray/missing char + 1 look-alike; never 2 arbitrary edits
+            best.append((d, cand))
+    best.sort()
+    if best and (len(best) == 1 or best[1][0] - best[0][0] >= 1.0):
+        return best[0][1], True
     return g, False
 
 
@@ -328,8 +344,13 @@ def validate(docs: dict[str, dict]) -> dict:
                                      f"Scan read the GSTIN as {mask_id(g)}; corrected to {mask_id(fixed)} (checksum and registry match)", "gst"))
                 g = gst["gstin"] = fixed
             valid, why = validate_gstin(g)
-            if not valid:
-                issues.append(_issue("GSTIN_INVALID", "error", why, "gst"))
+            if not valid and len(g) != 15:
+                issues.append(_issue("GSTIN_UNREADABLE", "error",
+                                     f"We couldn't read the GSTIN clearly from this photo (got {len(g)} characters instead of 15). "
+                                     "Please re-upload a straight, well-lit photo of the certificate.", "gst"))
+            elif not valid:
+                issues.append(_issue("GSTIN_INVALID", "error",
+                                     "The GSTIN failed its checksum. Either the number is wrong or the photo was unclear; please re-upload a clearer copy.", "gst"))
             else:
                 ok("GSTIN format and checksum valid")
                 reg_gst = store.lookup_gstin(g)
